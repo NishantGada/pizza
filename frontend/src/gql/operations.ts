@@ -109,12 +109,6 @@ export const DELETE_CONTRIBUTION_CATEGORY = gql`
   }
 `;
 
-export const APPLY_CONTRIBUTIONS_TO_CYCLES = gql`
-  mutation ApplyContributionsToCycles {
-    applyContributionsToCycles
-  }
-`;
-
 const CYCLE_FIELDS = `
   id
   startDate

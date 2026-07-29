@@ -168,7 +168,8 @@ function CategorySection({
         Categories
       </h2>
       <p className="mb-4 text-xs text-slate-400">
-        Snapshotted from your contribution settings. Tweak or remove them just for this paycheck.
+        From your contribution settings. Editing here overrides just this paycheck, until you
+        change the global rule.
       </p>
 
       <ul className="divide-y divide-slate-100">

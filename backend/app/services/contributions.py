@@ -1,7 +1,11 @@
-"""Global, per-user contribution categories (the reusable templates).
+"""Global, per-user contribution categories (the live rules).
 
-These are managed once (e.g. "Vacation 5%", "Education 10%", "Gym $50") and
-snapshotted onto each new pay cycle by `cycles.create_cycle`.
+These are managed once (e.g. "Vacation 5%", "Education 10%", "Gym $50"). They
+are live: creating, editing, or deleting one propagates to every existing pay
+cycle's snapshot (matched by name), so the dashboard always reflects the
+current rules. A per-cycle edit on a single cycle acts as an override and stays
+until the global rule is edited again. New cycles snapshot the current set at
+creation time (see `cycles.create_cycle`).
 """
 
 from decimal import Decimal
@@ -41,10 +45,13 @@ async def add_contribution_category(
     row = ContributionCategory(user_id=user_id, name=name, kind=kind, value=value)
     session.add(row)
     try:
-        await session.commit()
+        await session.flush()
     except IntegrityError as exc:
         await session.rollback()
         raise Conflict(f"A contribution category named “{name}” already exists.") from exc
+    # Live: add this category to every existing cycle that doesn't have it.
+    await _add_to_cycles(session, user_id, name=name, kind=kind, value=value)
+    await session.commit()
     await session.refresh(row)
     return row
 
@@ -73,6 +80,7 @@ async def update_contribution_category(
     value: Decimal | None = None,
 ) -> ContributionCategory:
     row = await _get_owned(session, user_id, category_id)
+    old_name = row.name
     new_kind = kind if kind is not None else row.kind
     new_value = value if value is not None else row.value
     if kind is not None or value is not None:
@@ -82,10 +90,19 @@ async def update_contribution_category(
     if name is not None:
         row.name = _clean_name(name)
     try:
-        await session.commit()
+        await session.flush()
     except IntegrityError as exc:
         await session.rollback()
         raise Conflict(f"A contribution category named “{row.name}” already exists.") from exc
+    # Live: push the new values onto every cycle's copy (matched by old name).
+    matches = await session.scalars(
+        select(Category).where(Category.user_id == user_id, Category.name == old_name)
+    )
+    for cat in matches:
+        cat.name = row.name
+        cat.kind = row.kind
+        cat.value = row.value
+    await session.commit()
     await session.refresh(row)
     return row
 
@@ -94,46 +111,37 @@ async def delete_contribution_category(
     session: AsyncSession, user_id: UUID, category_id: UUID
 ) -> None:
     row = await _get_owned(session, user_id, category_id)
+    name = row.name
     await session.delete(row)
+    # Live: remove this category from every cycle that carries it.
+    matches = await session.scalars(
+        select(Category).where(Category.user_id == user_id, Category.name == name)
+    )
+    for cat in matches:
+        await session.delete(cat)
     await session.commit()
 
 
-async def apply_to_existing_cycles(session: AsyncSession, user_id: UUID) -> int:
-    """Snapshot the user's global contribution categories onto every existing
-    cycle that doesn't already have a category of that name.
-
-    Opt-in backfill: existing per-cycle rows (including manual tweaks) are left
-    untouched; only missing categories are added. Returns the number of
-    per-cycle category rows created.
-    """
-    templates = await list_contribution_categories(session, user_id)
-    if not templates:
-        return 0
-
+async def _add_to_cycles(
+    session: AsyncSession, user_id: UUID, *, name: str, kind: str, value: Decimal
+) -> None:
     cycles = await session.scalars(
         select(PayCycle)
         .where(PayCycle.user_id == user_id)
         .options(selectinload(PayCycle.categories))
     )
-    added = 0
     for cycle in cycles:
-        existing_names = {c.name for c in cycle.categories}
-        for t in templates:
-            if t.name in existing_names:
-                continue
-            session.add(
-                Category(
-                    user_id=user_id,
-                    pay_cycle_id=cycle.id,
-                    name=t.name,
-                    kind=t.kind,
-                    value=t.value,
-                )
+        if any(c.name == name for c in cycle.categories):
+            continue
+        session.add(
+            Category(
+                user_id=user_id,
+                pay_cycle_id=cycle.id,
+                name=name,
+                kind=kind,
+                value=value,
             )
-            added += 1
-    if added:
-        await session.commit()
-    return added
+        )
 
 
 def _clean_name(name: str) -> str:
