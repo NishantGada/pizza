@@ -3,7 +3,7 @@ import { useNavigate, useParams } from "react-router-dom";
 import { useMutation, useQuery } from "urql";
 
 import BreakdownBar, { type Cycle } from "../components/BreakdownBar";
-import { Button, Card, ErrorNote, Field, Input, Spinner } from "../components/ui";
+import { Button, Card, ErrorNote, Field, Input, KindToggle, Spinner } from "../components/ui";
 import {
   ADD_CATEGORY,
   DELETE_CATEGORY,
@@ -12,9 +12,9 @@ import {
   UPDATE_CATEGORY,
   UPDATE_PAY_CYCLE,
 } from "../gql/operations";
-import { dateRange, money } from "../lib/format";
+import { dateRange, describeKind, kindToInput, kindToStored, money, type Kind } from "../lib/format";
 
-type Category = { id: string; name: string; amount: string };
+type Category = { id: string; name: string; kind: Kind; value: string; amount: string };
 type CycleFull = Cycle & {
   id: string;
   startDate: string;
@@ -145,13 +145,14 @@ function CategorySection({
   const [, updateCategory] = useMutation(UPDATE_CATEGORY);
   const [, deleteCategory] = useMutation(DELETE_CATEGORY);
   const [name, setName] = useState("");
+  const [kind, setKind] = useState<Kind>("PERCENT");
   const [amount, setAmount] = useState("");
   const [error, setError] = useState<string | null>(null);
 
   async function onAdd(e: FormEvent) {
     e.preventDefault();
     setError(null);
-    const res = await addCategory({ payCycleId: cycleId, name, amount });
+    const res = await addCategory({ payCycleId: cycleId, name, kind, value: kindToStored(kind, amount) });
     if (res.error) {
       setError(res.error.graphQLErrors[0]?.message ?? res.error.message);
       return;
@@ -163,9 +164,12 @@ function CategorySection({
 
   return (
     <Card className="p-6">
-      <h2 className="mb-4 text-sm font-semibold uppercase tracking-wide text-slate-400">
+      <h2 className="mb-1 text-sm font-semibold uppercase tracking-wide text-slate-400">
         Categories
       </h2>
+      <p className="mb-4 text-xs text-slate-400">
+        Snapshotted from your contribution settings. Tweak or remove them just for this paycheck.
+      </p>
 
       <ul className="divide-y divide-slate-100">
         {categories.length === 0 && (
@@ -175,8 +179,8 @@ function CategorySection({
           <CategoryRow
             key={cat.id}
             category={cat}
-            onSave={async (n, a) => {
-              await updateCategory({ id: cat.id, name: n, amount: a });
+            onSave={async (n, k, v) => {
+              await updateCategory({ id: cat.id, name: n, kind: k, value: v });
               onChange();
             }}
             onDelete={async () => {
@@ -198,17 +202,24 @@ function CategorySection({
             />
           </Field>
         </div>
-        <div className="w-32">
-          <Field label="Amount">
-            <Input
-              type="number"
-              min="0"
-              step="0.01"
-              required
-              value={amount}
-              onChange={(e) => setAmount(e.target.value)}
-              placeholder="50.00"
-            />
+        <Field label="Type">
+          <KindToggle value={kind} onChange={setKind} />
+        </Field>
+        <div className="w-28">
+          <Field label={kind === "PERCENT" ? "Percent" : "Amount"}>
+            <div className="flex items-center gap-1.5">
+              {kind === "FIXED" && <span className="text-slate-500">$</span>}
+              <Input
+                type="number"
+                min="0"
+                step={kind === "PERCENT" ? "0.1" : "0.01"}
+                required
+                value={amount}
+                onChange={(e) => setAmount(e.target.value)}
+                placeholder={kind === "PERCENT" ? "5" : "50.00"}
+              />
+              {kind === "PERCENT" && <span className="text-slate-500">%</span>}
+            </div>
           </Field>
         </div>
         <Button type="submit">Add</Button>
@@ -224,29 +235,34 @@ function CategoryRow({
   onDelete,
 }: {
   category: Category;
-  onSave: (name: string, amount: string) => Promise<void>;
+  onSave: (name: string, kind: Kind, value: string) => Promise<void>;
   onDelete: () => Promise<void>;
 }) {
   const [editing, setEditing] = useState(false);
   const [name, setName] = useState(category.name);
-  const [amount, setAmount] = useState(category.amount);
+  const [kind, setKind] = useState<Kind>(category.kind);
+  const [amount, setAmount] = useState(kindToInput(category.kind, category.value));
 
   if (editing) {
     return (
-      <li className="flex items-center gap-2 py-2">
-        <Input className="flex-1" value={name} onChange={(e) => setName(e.target.value)} />
-        <Input
-          type="number"
-          min="0"
-          step="0.01"
-          className="w-28"
-          value={amount}
-          onChange={(e) => setAmount(e.target.value)}
-        />
+      <li className="flex flex-wrap items-center gap-2 py-2">
+        <Input className="min-w-32 flex-1" value={name} onChange={(e) => setName(e.target.value)} />
+        <KindToggle value={kind} onChange={setKind} />
+        <div className="flex w-24 items-center gap-1">
+          {kind === "FIXED" && <span className="text-slate-500">$</span>}
+          <Input
+            type="number"
+            min="0"
+            step={kind === "PERCENT" ? "0.1" : "0.01"}
+            value={amount}
+            onChange={(e) => setAmount(e.target.value)}
+          />
+          {kind === "PERCENT" && <span className="text-slate-500">%</span>}
+        </div>
         <Button
           size="sm"
           onClick={async () => {
-            await onSave(name, amount);
+            await onSave(name, kind, kindToStored(kind, amount));
             setEditing(false);
           }}
         >
@@ -263,11 +279,17 @@ function CategoryRow({
     <li className="flex items-center justify-between py-2.5">
       <span className="text-slate-700">{category.name}</span>
       <div className="flex items-center gap-3">
+        {category.kind === "PERCENT" && (
+          <span className="text-xs tabular-nums text-slate-400">
+            {describeKind(category.kind, category.value)}
+          </span>
+        )}
         <span className="font-medium text-slate-900">{money(category.amount)}</span>
         <button
           onClick={() => {
             setName(category.name);
-            setAmount(category.amount);
+            setKind(category.kind);
+            setAmount(kindToInput(category.kind, category.value));
             setEditing(true);
           }}
           className="text-xs font-medium text-amber-700 hover:underline"

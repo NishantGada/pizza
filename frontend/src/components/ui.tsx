@@ -62,6 +62,37 @@ export function Field({
   );
 }
 
+type Kind = "PERCENT" | "FIXED";
+
+/** Segmented %/$ toggle for choosing a category kind. */
+export function KindToggle({
+  value,
+  onChange,
+}: {
+  value: Kind;
+  onChange: (k: Kind) => void;
+}) {
+  const opt = (k: Kind, label: string) => (
+    <button
+      type="button"
+      onClick={() => onChange(k)}
+      className={cx(
+        "px-3 py-2 text-sm font-medium transition-colors",
+        value === k ? "bg-amber-600 text-white" : "bg-white text-slate-600 hover:bg-slate-50",
+      )}
+    >
+      {label}
+    </button>
+  );
+  return (
+    <div className="inline-flex overflow-hidden rounded-lg border border-slate-300">
+      {opt("PERCENT", "%")}
+      <span className="w-px bg-slate-300" />
+      {opt("FIXED", "$")}
+    </div>
+  );
+}
+
 export function Card({ className, ...props }: HTMLAttributes<HTMLDivElement>) {
   return (
     <div

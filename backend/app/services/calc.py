@@ -3,10 +3,21 @@ from decimal import ROUND_HALF_UP, Decimal
 
 CENTS = Decimal("0.01")
 
+# Category kinds. 'percent' -> value is a fraction of income; 'fixed' -> value is dollars.
+KIND_PERCENT = "percent"
+KIND_FIXED = "fixed"
+
 
 def money(value: Decimal) -> Decimal:
     """Round to cents, half-up."""
     return Decimal(value).quantize(CENTS, rounding=ROUND_HALF_UP)
+
+
+def category_amount(income: Decimal, kind: str, value: Decimal) -> Decimal:
+    """Effective dollar amount of a category for a given cycle income."""
+    if kind == KIND_PERCENT:
+        return money(Decimal(income) * Decimal(value))
+    return money(Decimal(value))
 
 
 @dataclass(frozen=True)

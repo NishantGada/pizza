@@ -2,12 +2,19 @@ from __future__ import annotations
 
 from datetime import date, datetime
 from decimal import Decimal
+from enum import Enum
 from uuid import UUID
 
 import strawberry
 
-from app.models import BudgetSettings, Category, PayCycle, User
-from app.services.calc import compute_breakdown, money
+from app.models import BudgetSettings, Category, ContributionCategory, PayCycle, User
+from app.services.calc import KIND_FIXED, KIND_PERCENT, category_amount, compute_breakdown, money
+
+
+@strawberry.enum
+class CategoryKind(Enum):
+    PERCENT = KIND_PERCENT
+    FIXED = KIND_FIXED
 
 
 @strawberry.type
@@ -45,15 +52,43 @@ class BudgetSettingsType:
 
 
 @strawberry.type
-class CategoryType:
+class ContributionCategoryType:
     id: UUID
     name: str
-    amount: Decimal
+    kind: CategoryKind
+    value: Decimal
     created_at: datetime
 
     @classmethod
-    def from_model(cls, c: Category) -> "CategoryType":
-        return cls(id=c.id, name=c.name, amount=money(c.amount), created_at=c.created_at)
+    def from_model(cls, c: ContributionCategory) -> "ContributionCategoryType":
+        return cls(
+            id=c.id,
+            name=c.name,
+            kind=CategoryKind(c.kind),
+            value=c.value,
+            created_at=c.created_at,
+        )
+
+
+@strawberry.type
+class CategoryType:
+    id: UUID
+    name: str
+    kind: CategoryKind
+    value: Decimal
+    amount: Decimal  # effective dollars for this cycle's income
+    created_at: datetime
+
+    @classmethod
+    def from_model(cls, c: Category, income: Decimal) -> "CategoryType":
+        return cls(
+            id=c.id,
+            name=c.name,
+            kind=CategoryKind(c.kind),
+            value=c.value,
+            amount=category_amount(income, c.kind, c.value),
+            created_at=c.created_at,
+        )
 
 
 @strawberry.type
@@ -74,7 +109,8 @@ class PayCycleType:
     @classmethod
     def from_model(cls, c: PayCycle) -> "PayCycleType":
         cats = sorted(c.categories, key=lambda x: x.created_at)
-        cats_total = sum((cat.amount for cat in cats), Decimal("0"))
+        views = [CategoryType.from_model(cat, c.income) for cat in cats]
+        cats_total = sum((v.amount for v in views), Decimal("0"))
         breakdown = compute_breakdown(
             income=c.income,
             savings_pct=c.savings_pct,
@@ -94,7 +130,7 @@ class PayCycleType:
             retirement_amount=breakdown.retirement,
             categories_total=breakdown.categories_total,
             available_spending=breakdown.available_spending,
-            categories=[CategoryType.from_model(cat) for cat in cats],
+            categories=views,
         )
 
 

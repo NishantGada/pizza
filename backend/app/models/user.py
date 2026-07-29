@@ -19,3 +19,6 @@ class User(Base, TimestampMixin):
     pay_cycles: Mapped[list["PayCycle"]] = relationship(  # noqa: F821
         back_populates="user", cascade="all, delete-orphan"
     )
+    contribution_categories: Mapped[list["ContributionCategory"]] = relationship(  # noqa: F821
+        back_populates="user", cascade="all, delete-orphan"
+    )

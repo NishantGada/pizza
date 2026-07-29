@@ -16,6 +16,21 @@ export function percent(value: string | number, digits = 0): string {
   return `${(n * 100).toFixed(digits)}%`;
 }
 
+export type Kind = "PERCENT" | "FIXED";
+
+/** Stored value (fraction for percent, dollars for fixed) -> form input string. */
+export function kindToInput(kind: Kind, value: string | number): string {
+  return kind === "PERCENT" ? String(Number(value) * 100) : String(value);
+}
+/** Form input string -> stored value for the given kind. */
+export function kindToStored(kind: Kind, input: string | number): string {
+  return kind === "PERCENT" ? String(Number(input) / 100) : String(input);
+}
+/** Human label for a stored kind/value pair: "5%" or "$50.00". */
+export function describeKind(kind: Kind, value: string | number): string {
+  return kind === "PERCENT" ? percent(value) : money(value);
+}
+
 /** ISO date "2026-07-01" -> "Jul 1" */
 export function shortDate(iso: string): string {
   const [y, m, d] = iso.split("-").map(Number);

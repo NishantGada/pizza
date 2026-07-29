@@ -64,6 +64,51 @@ export const UPDATE_BUDGET_SETTINGS = gql`
   }
 `;
 
+export const CONTRIBUTION_CATEGORIES = gql`
+  query ContributionCategories {
+    contributionCategories {
+      id
+      name
+      kind
+      value
+      createdAt
+    }
+  }
+`;
+
+export const ADD_CONTRIBUTION_CATEGORY = gql`
+  mutation AddContributionCategory($name: String!, $kind: CategoryKind!, $value: Decimal!) {
+    addContributionCategory(name: $name, kind: $kind, value: $value) {
+      id
+      name
+      kind
+      value
+    }
+  }
+`;
+
+export const UPDATE_CONTRIBUTION_CATEGORY = gql`
+  mutation UpdateContributionCategory(
+    $id: UUID!
+    $name: String
+    $kind: CategoryKind
+    $value: Decimal
+  ) {
+    updateContributionCategory(id: $id, name: $name, kind: $kind, value: $value) {
+      id
+      name
+      kind
+      value
+    }
+  }
+`;
+
+export const DELETE_CONTRIBUTION_CATEGORY = gql`
+  mutation DeleteContributionCategory($id: UUID!) {
+    deleteContributionCategory(id: $id)
+  }
+`;
+
 const CYCLE_FIELDS = `
   id
   startDate
@@ -79,6 +124,8 @@ const CYCLE_FIELDS = `
   categories {
     id
     name
+    kind
+    value
     amount
     createdAt
   }
@@ -138,16 +185,16 @@ export const DELETE_PAY_CYCLE = gql`
 `;
 
 export const ADD_CATEGORY = gql`
-  mutation AddCategory($payCycleId: UUID!, $name: String!, $amount: Decimal!) {
-    addCategory(payCycleId: $payCycleId, name: $name, amount: $amount) {
+  mutation AddCategory($payCycleId: UUID!, $name: String!, $kind: CategoryKind!, $value: Decimal!) {
+    addCategory(payCycleId: $payCycleId, name: $name, kind: $kind, value: $value) {
       id
     }
   }
 `;
 
 export const UPDATE_CATEGORY = gql`
-  mutation UpdateCategory($id: UUID!, $name: String, $amount: Decimal) {
-    updateCategory(id: $id, name: $name, amount: $amount) {
+  mutation UpdateCategory($id: UUID!, $name: String, $kind: CategoryKind, $value: Decimal) {
+    updateCategory(id: $id, name: $name, kind: $kind, value: $value) {
       id
     }
   }
