@@ -194,6 +194,16 @@ class Mutation:
             return True
 
     @strawberry.mutation
+    async def apply_contributions_to_cycles(self, info: strawberry.Info) -> int:
+        """Backfill global contribution categories onto existing cycles.
+
+        Returns the number of per-cycle category rows created.
+        """
+        user_id = require_user(info)
+        async with info.context.db() as session:
+            return await guard(contributions.apply_to_existing_cycles(session, user_id))
+
+    @strawberry.mutation
     async def create_pay_cycle(
         self,
         info: strawberry.Info,

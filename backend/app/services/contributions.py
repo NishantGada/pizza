@@ -10,8 +10,9 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
-from app.models import ContributionCategory
+from app.models import Category, ContributionCategory, PayCycle
 from app.services.calc import KIND_FIXED, KIND_PERCENT
 from app.services.errors import Conflict, InvalidInput, NotFound
 
@@ -95,6 +96,44 @@ async def delete_contribution_category(
     row = await _get_owned(session, user_id, category_id)
     await session.delete(row)
     await session.commit()
+
+
+async def apply_to_existing_cycles(session: AsyncSession, user_id: UUID) -> int:
+    """Snapshot the user's global contribution categories onto every existing
+    cycle that doesn't already have a category of that name.
+
+    Opt-in backfill: existing per-cycle rows (including manual tweaks) are left
+    untouched; only missing categories are added. Returns the number of
+    per-cycle category rows created.
+    """
+    templates = await list_contribution_categories(session, user_id)
+    if not templates:
+        return 0
+
+    cycles = await session.scalars(
+        select(PayCycle)
+        .where(PayCycle.user_id == user_id)
+        .options(selectinload(PayCycle.categories))
+    )
+    added = 0
+    for cycle in cycles:
+        existing_names = {c.name for c in cycle.categories}
+        for t in templates:
+            if t.name in existing_names:
+                continue
+            session.add(
+                Category(
+                    user_id=user_id,
+                    pay_cycle_id=cycle.id,
+                    name=t.name,
+                    kind=t.kind,
+                    value=t.value,
+                )
+            )
+            added += 1
+    if added:
+        await session.commit()
+    return added
 
 
 def _clean_name(name: str) -> str:

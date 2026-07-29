@@ -4,6 +4,7 @@ import { useMutation, useQuery } from "urql";
 import { Button, Card, ErrorNote, Field, Input, KindToggle, Spinner } from "../components/ui";
 import {
   ADD_CONTRIBUTION_CATEGORY,
+  APPLY_CONTRIBUTIONS_TO_CYCLES,
   BUDGET_SETTINGS,
   CONTRIBUTION_CATEGORIES,
   DELETE_CONTRIBUTION_CATEGORY,
@@ -137,14 +138,31 @@ function ContributionCategoriesSection() {
   }>({ query: CONTRIBUTION_CATEGORIES, requestPolicy: "cache-and-network" });
   const [, addCategory] = useMutation(ADD_CONTRIBUTION_CATEGORY);
   const [, deleteCategory] = useMutation(DELETE_CONTRIBUTION_CATEGORY);
+  const [{ fetching: applying }, applyToCycles] = useMutation(APPLY_CONTRIBUTIONS_TO_CYCLES);
 
   const [name, setName] = useState("");
   const [kind, setKind] = useState<Kind>("PERCENT");
   const [amount, setAmount] = useState("");
   const [formError, setFormError] = useState<string | null>(null);
+  const [applyMsg, setApplyMsg] = useState<string | null>(null);
 
   const reload = () => refetch({ requestPolicy: "network-only" });
   const categories = data?.contributionCategories ?? [];
+
+  async function onApply() {
+    setApplyMsg(null);
+    const res = await applyToCycles({});
+    if (res.error) {
+      setApplyMsg(res.error.graphQLErrors[0]?.message ?? res.error.message);
+      return;
+    }
+    const n: number = res.data?.applyContributionsToCycles ?? 0;
+    setApplyMsg(
+      n === 0
+        ? "Existing cycles already include all categories."
+        : `Applied — added ${n} ${n === 1 ? "category" : "categories"} across your cycles.`,
+    );
+  }
 
   async function onAdd(e: FormEvent) {
     e.preventDefault();
@@ -230,6 +248,19 @@ function ContributionCategoriesSection() {
               <Button type="submit">Add</Button>
             </form>
             <ErrorNote>{formError}</ErrorNote>
+
+            {categories.length > 0 && (
+              <div className="mt-5 flex flex-wrap items-center gap-3 border-t border-slate-100 pt-4">
+                <Button variant="ghost" size="sm" onClick={onApply} disabled={applying}>
+                  {applying ? "Applying…" : "Apply to existing cycles"}
+                </Button>
+                <span className="text-xs text-slate-400">
+                  New cycles get these automatically. Use this to add them to paychecks you
+                  already created.
+                </span>
+                {applyMsg && <span className="text-sm text-emerald-600">{applyMsg}</span>}
+              </div>
+            )}
           </>
         )}
       </Card>
