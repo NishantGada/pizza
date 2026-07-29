@@ -14,6 +14,8 @@ class Settings(BaseSettings):
     access_token_expire_minutes: int = 1440
 
     cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
+    # Any localhost/127.0.0.1 port in local dev (Vite may pick 5174+ if 5173 is taken).
+    cors_origin_regex: str = r"^http://(localhost|127\.0\.0\.1):\d+$"
 
     default_savings_pct: Decimal = Decimal("0.60")
     default_retirement_401k_pct: Decimal = Decimal("0.01")
