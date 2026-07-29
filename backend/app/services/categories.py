@@ -1,12 +1,32 @@
 from decimal import Decimal
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import Category
 from app.services.cycles import get_cycle
 from app.services.errors import InvalidInput, NotFound
+
+
+async def category_totals(
+    session: AsyncSession, user_id: UUID
+) -> list[tuple[str, Decimal, int]]:
+    """Sum each category name across all of the user's pay cycles.
+
+    Returns (name, total_amount, cycle_count) ordered by total desc.
+    """
+    result = await session.execute(
+        select(
+            Category.name,
+            func.sum(Category.amount),
+            func.count(Category.id),
+        )
+        .where(Category.user_id == user_id)
+        .group_by(Category.name)
+        .order_by(func.sum(Category.amount).desc(), Category.name.asc())
+    )
+    return [(name, Decimal(total), int(count)) for name, total, count in result.all()]
 
 
 async def add_category(

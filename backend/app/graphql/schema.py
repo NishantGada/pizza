@@ -12,6 +12,7 @@ from app.graphql.context import require_user
 from app.graphql.types import (
     AuthPayload,
     BudgetSettingsType,
+    CategoryTotal,
     CategoryType,
     DashboardSummary,
     PayCycleType,
@@ -73,15 +74,25 @@ class Query:
         async with info.context.db() as session:
             rows = await guard(cycles.list_cycles(session, user_id))
             views = [PayCycleType.from_model(c) for c in rows]
+            cat_totals = await guard(categories.category_totals(session, user_id))
+        total_saved = money(sum((v.savings_amount for v in views), Decimal("0")))
+        total_retirement = money(sum((v.retirement_amount for v in views), Decimal("0")))
+        total_hsa = money(sum((v.hsa_amount for v in views), Decimal("0")))
+        total_allocated = money(sum((v.categories_total for v in views), Decimal("0")))
         return DashboardSummary(
             cycle_count=len(views),
             total_income=money(sum((v.income for v in views), Decimal("0"))),
-            total_saved=money(sum((v.savings_amount for v in views), Decimal("0"))),
-            total_retirement=money(sum((v.retirement_amount for v in views), Decimal("0"))),
-            total_hsa=money(sum((v.hsa_amount for v in views), Decimal("0"))),
-            total_allocated=money(sum((v.categories_total for v in views), Decimal("0"))),
+            total_saved=total_saved,
+            total_retirement=total_retirement,
+            total_hsa=total_hsa,
+            total_allocated=total_allocated,
+            total_contributed=money(total_saved + total_retirement + total_hsa + total_allocated),
             total_available=money(sum((v.available_spending for v in views), Decimal("0"))),
             latest_cycle=views[0] if views else None,
+            by_category=[
+                CategoryTotal(name=name, total=money(total), cycle_count=count)
+                for name, total, count in cat_totals
+            ],
         )
 
 

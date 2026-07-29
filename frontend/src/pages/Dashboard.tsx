@@ -8,11 +8,17 @@ import { CREATE_PAY_CYCLE, DASHBOARD } from "../gql/operations";
 import { dateRange, money } from "../lib/format";
 
 type CycleRow = Cycle & { id: string; startDate: string; endDate: string };
+type CategoryTotal = { name: string; total: string; cycleCount: number };
 type Summary = {
   cycleCount: number;
   totalIncome: string;
   totalSaved: string;
+  totalRetirement: string;
+  totalHsa: string;
+  totalAllocated: string;
+  totalContributed: string;
   totalAvailable: string;
+  byCategory: CategoryTotal[];
 };
 
 function Stat({ label, value }: { label: string; value: string }) {
@@ -44,6 +50,8 @@ export default function Dashboard() {
         <Stat label="Total saved" value={money(summary?.totalSaved ?? 0)} />
         <Stat label="Total spending" value={money(summary?.totalAvailable ?? 0)} />
       </div>
+
+      {summary && summary.cycleCount > 0 && <Contributions summary={summary} />}
 
       <NewCycleForm onCreated={() => refetch({ requestPolicy: "network-only" })} />
 
@@ -82,6 +90,75 @@ export default function Dashboard() {
         )}
       </section>
     </div>
+  );
+}
+
+function Contributions({ summary }: { summary: Summary }) {
+  const income = Number(summary.totalIncome) || 0;
+  const pct = (v: string) => (income > 0 ? `${Math.round((Number(v) / income) * 100)}%` : "—");
+  const fixed = [
+    { label: "Savings", value: summary.totalSaved, color: "#f59e0b" },
+    { label: "401(k)", value: summary.totalRetirement, color: "#10b981" },
+    { label: "HSA", value: summary.totalHsa, color: "#0ea5e9" },
+  ];
+
+  return (
+    <Card className="p-6">
+      <div className="mb-5 flex items-baseline justify-between">
+        <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-400">
+          Contributions
+        </h2>
+        <div className="text-right">
+          <span className="text-lg font-semibold">{money(summary.totalContributed)}</span>
+          <span className="ml-2 text-sm text-slate-400">
+            {pct(summary.totalContributed)} of income
+          </span>
+        </div>
+      </div>
+
+      <ul className="space-y-2.5">
+        {fixed.map((f) => (
+          <li key={f.label} className="flex items-center justify-between text-sm">
+            <span className="flex items-center gap-2 text-slate-600">
+              <span className="h-2.5 w-2.5 rounded-sm" style={{ backgroundColor: f.color }} />
+              {f.label}
+            </span>
+            <span className="flex items-baseline gap-2">
+              <span className="text-xs tabular-nums text-slate-400">{pct(f.value)}</span>
+              <span className="font-medium text-slate-900">{money(f.value)}</span>
+            </span>
+          </li>
+        ))}
+      </ul>
+
+      {summary.byCategory.length > 0 && (
+        <>
+          <div className="my-4 flex items-center gap-2 border-t border-slate-100 pt-4">
+            <span className="h-2.5 w-2.5 rounded-sm" style={{ backgroundColor: "#8b5cf6" }} />
+            <span className="text-xs font-semibold uppercase tracking-wide text-slate-400">
+              Categories
+            </span>
+            <span className="text-xs text-slate-400">· {money(summary.totalAllocated)} total</span>
+          </div>
+          <ul className="space-y-2.5">
+            {summary.byCategory.map((c) => (
+              <li key={c.name} className="flex items-center justify-between text-sm">
+                <span className="text-slate-600">
+                  {c.name}
+                  <span className="ml-2 text-xs text-slate-400">
+                    {c.cycleCount} {c.cycleCount === 1 ? "cycle" : "cycles"}
+                  </span>
+                </span>
+                <span className="flex items-baseline gap-2">
+                  <span className="text-xs tabular-nums text-slate-400">{pct(c.total)}</span>
+                  <span className="font-medium text-slate-900">{money(c.total)}</span>
+                </span>
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
+    </Card>
   );
 }
 

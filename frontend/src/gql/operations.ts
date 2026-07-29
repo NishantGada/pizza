@@ -93,7 +93,13 @@ export const DASHBOARD = gql`
       totalRetirement
       totalHsa
       totalAllocated
+      totalContributed
       totalAvailable
+      byCategory {
+        name
+        total
+        cycleCount
+      }
     }
     payCycles {
       ${CYCLE_FIELDS}

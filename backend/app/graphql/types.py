@@ -99,6 +99,13 @@ class PayCycleType:
 
 
 @strawberry.type
+class CategoryTotal:
+    name: str
+    total: Decimal
+    cycle_count: int
+
+
+@strawberry.type
 class DashboardSummary:
     cycle_count: int
     total_income: Decimal
@@ -106,5 +113,7 @@ class DashboardSummary:
     total_retirement: Decimal
     total_hsa: Decimal
     total_allocated: Decimal
+    total_contributed: Decimal
     total_available: Decimal
     latest_cycle: PayCycleType | None
+    by_category: list[CategoryTotal]
