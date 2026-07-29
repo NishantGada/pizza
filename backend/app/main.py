@@ -1,19 +1,15 @@
-from fastapi import Depends, FastAPI, Request
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from sqlalchemy.ext.asyncio import AsyncSession
 from strawberry.fastapi import GraphQLRouter
 
 from app.core.config import settings
-from app.db.session import get_session
+from app.db.session import async_session_factory
 from app.graphql.context import Context, get_context
 from app.graphql.schema import schema
 
 
-async def build_context(
-    request: Request,
-    session: AsyncSession = Depends(get_session),
-) -> Context:
-    return await get_context(session=session, authorization=request.headers.get("Authorization"))
+async def build_context(request: Request) -> Context:
+    return await get_context(async_session_factory, request.headers.get("Authorization"))
 
 
 def create_app() -> FastAPI:

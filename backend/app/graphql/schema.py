@@ -40,34 +40,39 @@ class Query:
     @strawberry.field
     async def me(self, info: strawberry.Info) -> UserType:
         user_id = require_user(info)
-        user = await guard(auth.get_user(info.context.session, user_id))
-        if user is None:
-            raise GraphQLError("User not found.")
-        return UserType.from_model(user)
+        async with info.context.db() as session:
+            user = await guard(auth.get_user(session, user_id))
+            if user is None:
+                raise GraphQLError("User not found.")
+            return UserType.from_model(user)
 
     @strawberry.field
     async def budget_settings(self, info: strawberry.Info) -> BudgetSettingsType:
         user_id = require_user(info)
-        row = await guard(settings.get_settings(info.context.session, user_id))
-        return BudgetSettingsType.from_model(row)
+        async with info.context.db() as session:
+            row = await guard(settings.get_settings(session, user_id))
+            return BudgetSettingsType.from_model(row)
 
     @strawberry.field
     async def pay_cycles(self, info: strawberry.Info) -> list[PayCycleType]:
         user_id = require_user(info)
-        rows = await guard(cycles.list_cycles(info.context.session, user_id))
-        return [PayCycleType.from_model(c) for c in rows]
+        async with info.context.db() as session:
+            rows = await guard(cycles.list_cycles(session, user_id))
+            return [PayCycleType.from_model(c) for c in rows]
 
     @strawberry.field
     async def pay_cycle(self, info: strawberry.Info, id: UUID) -> PayCycleType:
         user_id = require_user(info)
-        row = await guard(cycles.get_cycle(info.context.session, user_id, id))
-        return PayCycleType.from_model(row)
+        async with info.context.db() as session:
+            row = await guard(cycles.get_cycle(session, user_id, id))
+            return PayCycleType.from_model(row)
 
     @strawberry.field
     async def dashboard(self, info: strawberry.Info) -> DashboardSummary:
         user_id = require_user(info)
-        rows = await guard(cycles.list_cycles(info.context.session, user_id))
-        views = [PayCycleType.from_model(c) for c in rows]
+        async with info.context.db() as session:
+            rows = await guard(cycles.list_cycles(session, user_id))
+            views = [PayCycleType.from_model(c) for c in rows]
         return DashboardSummary(
             cycle_count=len(views),
             total_income=money(sum((v.income for v in views), Decimal("0"))),
@@ -84,13 +89,19 @@ class Query:
 class Mutation:
     @strawberry.mutation
     async def register(self, info: strawberry.Info, email: str, password: str) -> AuthPayload:
-        user = await guard(auth.register(info.context.session, email, password))
-        return AuthPayload(token=create_access_token(str(user.id)), user=UserType.from_model(user))
+        async with info.context.db() as session:
+            user = await guard(auth.register(session, email, password))
+            return AuthPayload(
+                token=create_access_token(str(user.id)), user=UserType.from_model(user)
+            )
 
     @strawberry.mutation
     async def login(self, info: strawberry.Info, email: str, password: str) -> AuthPayload:
-        user = await guard(auth.authenticate(info.context.session, email, password))
-        return AuthPayload(token=create_access_token(str(user.id)), user=UserType.from_model(user))
+        async with info.context.db() as session:
+            user = await guard(auth.authenticate(session, email, password))
+            return AuthPayload(
+                token=create_access_token(str(user.id)), user=UserType.from_model(user)
+            )
 
     @strawberry.mutation
     async def update_budget_settings(
@@ -101,16 +112,17 @@ class Mutation:
         hsa_per_cycle: Decimal | None = None,
     ) -> BudgetSettingsType:
         user_id = require_user(info)
-        row = await guard(
-            settings.update_settings(
-                info.context.session,
-                user_id,
-                savings_pct=savings_pct,
-                retirement_401k_pct=retirement_401k_pct,
-                hsa_per_cycle=hsa_per_cycle,
+        async with info.context.db() as session:
+            row = await guard(
+                settings.update_settings(
+                    session,
+                    user_id,
+                    savings_pct=savings_pct,
+                    retirement_401k_pct=retirement_401k_pct,
+                    hsa_per_cycle=hsa_per_cycle,
+                )
             )
-        )
-        return BudgetSettingsType.from_model(row)
+            return BudgetSettingsType.from_model(row)
 
     @strawberry.mutation
     async def create_pay_cycle(
@@ -121,16 +133,17 @@ class Mutation:
         income: Decimal,
     ) -> PayCycleType:
         user_id = require_user(info)
-        row = await guard(
-            cycles.create_cycle(
-                info.context.session,
-                user_id,
-                start_date=start_date,
-                end_date=end_date,
-                income=income,
+        async with info.context.db() as session:
+            row = await guard(
+                cycles.create_cycle(
+                    session,
+                    user_id,
+                    start_date=start_date,
+                    end_date=end_date,
+                    income=income,
+                )
             )
-        )
-        return PayCycleType.from_model(row)
+            return PayCycleType.from_model(row)
 
     @strawberry.mutation
     async def update_pay_cycle(
@@ -142,23 +155,25 @@ class Mutation:
         income: Decimal | None = None,
     ) -> PayCycleType:
         user_id = require_user(info)
-        row = await guard(
-            cycles.update_cycle(
-                info.context.session,
-                user_id,
-                id,
-                start_date=start_date,
-                end_date=end_date,
-                income=income,
+        async with info.context.db() as session:
+            row = await guard(
+                cycles.update_cycle(
+                    session,
+                    user_id,
+                    id,
+                    start_date=start_date,
+                    end_date=end_date,
+                    income=income,
+                )
             )
-        )
-        return PayCycleType.from_model(row)
+            return PayCycleType.from_model(row)
 
     @strawberry.mutation
     async def delete_pay_cycle(self, info: strawberry.Info, id: UUID) -> bool:
         user_id = require_user(info)
-        await guard(cycles.delete_cycle(info.context.session, user_id, id))
-        return True
+        async with info.context.db() as session:
+            await guard(cycles.delete_cycle(session, user_id, id))
+            return True
 
     @strawberry.mutation
     async def add_category(
@@ -169,16 +184,17 @@ class Mutation:
         amount: Decimal,
     ) -> CategoryType:
         user_id = require_user(info)
-        row = await guard(
-            categories.add_category(
-                info.context.session,
-                user_id,
-                pay_cycle_id=pay_cycle_id,
-                name=name,
-                amount=amount,
+        async with info.context.db() as session:
+            row = await guard(
+                categories.add_category(
+                    session,
+                    user_id,
+                    pay_cycle_id=pay_cycle_id,
+                    name=name,
+                    amount=amount,
+                )
             )
-        )
-        return CategoryType.from_model(row)
+            return CategoryType.from_model(row)
 
     @strawberry.mutation
     async def update_category(
@@ -189,18 +205,18 @@ class Mutation:
         amount: Decimal | None = None,
     ) -> CategoryType:
         user_id = require_user(info)
-        row = await guard(
-            categories.update_category(
-                info.context.session, user_id, id, name=name, amount=amount
+        async with info.context.db() as session:
+            row = await guard(
+                categories.update_category(session, user_id, id, name=name, amount=amount)
             )
-        )
-        return CategoryType.from_model(row)
+            return CategoryType.from_model(row)
 
     @strawberry.mutation
     async def delete_category(self, info: strawberry.Info, id: UUID) -> bool:
         user_id = require_user(info)
-        await guard(categories.delete_category(info.context.session, user_id, id))
-        return True
+        async with info.context.db() as session:
+            await guard(categories.delete_category(session, user_id, id))
+            return True
 
 
 schema = strawberry.Schema(query=Query, mutation=Mutation)
