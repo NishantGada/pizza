@@ -5,16 +5,27 @@ import { useMutation, useQuery } from "urql";
 import BreakdownBar, { type Cycle } from "../components/BreakdownBar";
 import { Button, Card, ErrorNote, Field, Input, KindToggle, Spinner } from "../components/ui";
 import {
-  ADD_CATEGORY,
-  DELETE_CATEGORY,
+  ADD_CYCLE_CATEGORY,
+  DELETE_CYCLE_CATEGORY,
   DELETE_PAY_CYCLE,
   PAY_CYCLE,
-  UPDATE_CATEGORY,
+  RESET_CYCLE_CATEGORY,
+  SET_CYCLE_CATEGORY,
+  UPDATE_CYCLE_CATEGORY,
   UPDATE_PAY_CYCLE,
 } from "../gql/operations";
 import { dateRange, describeKind, kindToInput, kindToStored, money, type Kind } from "../lib/format";
 
-type Category = { id: string; name: string; kind: Kind; value: string; amount: string };
+type CategorySource = "INHERITED" | "OVERRIDE" | "CYCLE";
+type Category = {
+  id: string | null;
+  contributionCategoryId: string | null;
+  name: string;
+  kind: Kind;
+  value: string;
+  amount: string;
+  source: CategorySource;
+};
 type CycleFull = Cycle & {
   id: string;
   startDate: string;
@@ -141,24 +152,65 @@ function CategorySection({
   categories: Category[];
   onChange: () => void;
 }) {
-  const [, addCategory] = useMutation(ADD_CATEGORY);
-  const [, updateCategory] = useMutation(UPDATE_CATEGORY);
-  const [, deleteCategory] = useMutation(DELETE_CATEGORY);
+  const [, addAdhoc] = useMutation(ADD_CYCLE_CATEGORY);
+  const [, updateAdhoc] = useMutation(UPDATE_CYCLE_CATEGORY);
+  const [, deleteAdhoc] = useMutation(DELETE_CYCLE_CATEGORY);
+  const [, setOverride] = useMutation(SET_CYCLE_CATEGORY);
+  const [, resetOverride] = useMutation(RESET_CYCLE_CATEGORY);
   const [name, setName] = useState("");
   const [kind, setKind] = useState<Kind>("PERCENT");
   const [amount, setAmount] = useState("");
   const [error, setError] = useState<string | null>(null);
 
+  function report(res: { error?: { graphQLErrors: { message: string }[]; message: string } }) {
+    if (res.error) {
+      setError(res.error.graphQLErrors[0]?.message ?? res.error.message);
+      return false;
+    }
+    return true;
+  }
+
   async function onAdd(e: FormEvent) {
     e.preventDefault();
     setError(null);
-    const res = await addCategory({ payCycleId: cycleId, name, kind, value: kindToStored(kind, amount) });
-    if (res.error) {
-      setError(res.error.graphQLErrors[0]?.message ?? res.error.message);
-      return;
-    }
+    const res = await addAdhoc({ payCycleId: cycleId, name, kind, value: kindToStored(kind, amount) });
+    if (!report(res)) return;
     setName("");
     setAmount("");
+    onChange();
+  }
+
+  // Editing an inherited/overridden rule writes a per-cycle override; editing a
+  // one-off (ad-hoc) category updates that row directly.
+  async function saveCategory(cat: Category, n: string, k: Kind, v: string) {
+    setError(null);
+    const res =
+      cat.source === "CYCLE"
+        ? await updateAdhoc({ id: cat.id, name: n, kind: k, value: v })
+        : await setOverride({
+            payCycleId: cycleId,
+            contributionCategoryId: cat.contributionCategoryId,
+            kind: k,
+            value: v,
+          });
+    if (!report(res)) return;
+    onChange();
+  }
+
+  async function resetCategory(cat: Category) {
+    setError(null);
+    const res = await resetOverride({
+      payCycleId: cycleId,
+      contributionCategoryId: cat.contributionCategoryId,
+    });
+    if (!report(res)) return;
+    onChange();
+  }
+
+  async function removeCategory(cat: Category) {
+    setError(null);
+    const res = await deleteAdhoc({ id: cat.id });
+    if (!report(res)) return;
     onChange();
   }
 
@@ -168,8 +220,8 @@ function CategorySection({
         Categories
       </h2>
       <p className="mb-4 text-xs text-slate-400">
-        From your contribution settings. Editing here overrides just this paycheck, until you
-        change the global rule.
+        Inherited live from your contribution settings. Editing one here overrides just this
+        paycheck; reset it to follow the global rule again.
       </p>
 
       <ul className="divide-y divide-slate-100">
@@ -178,16 +230,11 @@ function CategorySection({
         )}
         {categories.map((cat) => (
           <CategoryRow
-            key={cat.id}
+            key={cat.contributionCategoryId ?? cat.id}
             category={cat}
-            onSave={async (n, k, v) => {
-              await updateCategory({ id: cat.id, name: n, kind: k, value: v });
-              onChange();
-            }}
-            onDelete={async () => {
-              await deleteCategory({ id: cat.id });
-              onChange();
-            }}
+            onSave={(n, k, v) => saveCategory(cat, n, k, v)}
+            onReset={() => resetCategory(cat)}
+            onRemove={() => removeCategory(cat)}
           />
         ))}
       </ul>
@@ -223,7 +270,7 @@ function CategorySection({
             </div>
           </Field>
         </div>
-        <Button type="submit">Add</Button>
+        <Button type="submit">Add one-off</Button>
       </form>
       <ErrorNote>{error}</ErrorNote>
     </Card>
@@ -233,12 +280,16 @@ function CategorySection({
 function CategoryRow({
   category,
   onSave,
-  onDelete,
+  onReset,
+  onRemove,
 }: {
   category: Category;
   onSave: (name: string, kind: Kind, value: string) => Promise<void>;
-  onDelete: () => Promise<void>;
+  onReset: () => Promise<void>;
+  onRemove: () => Promise<void>;
 }) {
+  const isAdhoc = category.source === "CYCLE";
+  const isOverride = category.source === "OVERRIDE";
   const [editing, setEditing] = useState(false);
   const [name, setName] = useState(category.name);
   const [kind, setKind] = useState<Kind>(category.kind);
@@ -247,7 +298,15 @@ function CategoryRow({
   if (editing) {
     return (
       <li className="flex flex-wrap items-center gap-2 py-2">
-        <Input className="min-w-32 flex-1" value={name} onChange={(e) => setName(e.target.value)} />
+        {isAdhoc ? (
+          <Input
+            className="min-w-32 flex-1"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+          />
+        ) : (
+          <span className="min-w-32 flex-1 text-slate-700">{category.name}</span>
+        )}
         <KindToggle value={kind} onChange={setKind} />
         <div className="flex w-24 items-center gap-1">
           {kind === "FIXED" && <span className="text-slate-500">$</span>}
@@ -278,7 +337,19 @@ function CategoryRow({
 
   return (
     <li className="flex items-center justify-between py-2.5">
-      <span className="text-slate-700">{category.name}</span>
+      <span className="flex items-center gap-2 text-slate-700">
+        {category.name}
+        {isOverride && (
+          <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-amber-700">
+            overridden
+          </span>
+        )}
+        {isAdhoc && (
+          <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-slate-500">
+            one-off
+          </span>
+        )}
+      </span>
       <div className="flex items-center gap-3">
         {category.kind === "PERCENT" && (
           <span className="text-xs tabular-nums text-slate-400">
@@ -297,9 +368,16 @@ function CategoryRow({
         >
           edit
         </button>
-        <button onClick={onDelete} className="text-xs font-medium text-red-600 hover:underline">
-          remove
-        </button>
+        {isOverride && (
+          <button onClick={onReset} className="text-xs font-medium text-slate-500 hover:underline">
+            reset
+          </button>
+        )}
+        {isAdhoc && (
+          <button onClick={onRemove} className="text-xs font-medium text-red-600 hover:underline">
+            remove
+          </button>
+        )}
       </div>
     </li>
   );

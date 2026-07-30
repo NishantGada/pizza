@@ -6,10 +6,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.models import Category, PayCycle
-from app.services.contributions import list_contribution_categories
+from app.models import PayCycle
 from app.services.errors import InvalidInput, NotFound
-from app.services.settings import get_settings
 
 
 async def list_cycles(session: AsyncSession, user_id: UUID) -> list[PayCycle]:
@@ -46,22 +44,15 @@ async def create_cycle(
     if income < 0:
         raise InvalidInput("Income cannot be negative.")
 
-    # Snapshot current rule values so future settings changes never rewrite history.
-    rules = await get_settings(session, user_id)
-    templates = await list_contribution_categories(session, user_id)
+    # A cycle owns only income + dates. Rules (settings and contribution
+    # categories) are inherited live from the user's globals at read time, so a
+    # new cycle starts with no overrides.
     cycle = PayCycle(
         user_id=user_id,
         start_date=start_date,
         end_date=end_date,
         income=income,
-        savings_pct=rules.savings_pct,
-        retirement_401k_pct=rules.retirement_401k_pct,
-        hsa_amount=rules.hsa_per_cycle,
     )
-    # Snapshot the user's global contribution categories onto this cycle.
-    cycle.categories = [
-        Category(user_id=user_id, name=t.name, kind=t.kind, value=t.value) for t in templates
-    ]
     session.add(cycle)
     await session.commit()
     return await get_cycle(session, user_id, cycle.id)

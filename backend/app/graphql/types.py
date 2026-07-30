@@ -7,14 +7,22 @@ from uuid import UUID
 
 import strawberry
 
-from app.models import BudgetSettings, Category, ContributionCategory, PayCycle, User
-from app.services.calc import KIND_FIXED, KIND_PERCENT, category_amount, compute_breakdown, money
+from app.models import BudgetSettings, ContributionCategory, PayCycle, User
+from app.services.calc import KIND_FIXED, KIND_PERCENT
+from app.services.resolve import CategorySource, ResolvedCategory, ResolvedCycle
 
 
 @strawberry.enum
 class CategoryKind(Enum):
     PERCENT = KIND_PERCENT
     FIXED = KIND_FIXED
+
+
+@strawberry.enum
+class CategorySourceType(Enum):
+    INHERITED = CategorySource.INHERITED.value
+    OVERRIDE = CategorySource.OVERRIDE.value
+    CYCLE = CategorySource.CYCLE.value
 
 
 @strawberry.type
@@ -72,21 +80,27 @@ class ContributionCategoryType:
 
 @strawberry.type
 class CategoryType:
-    id: UUID
+    # Present only when the cycle stores a row (override or ad-hoc); null when
+    # the value is inherited live from the global rule.
+    id: UUID | None
+    contribution_category_id: UUID | None
     name: str
     kind: CategoryKind
     value: Decimal
     amount: Decimal  # effective dollars for this cycle's income
+    source: CategorySourceType
     created_at: datetime
 
     @classmethod
-    def from_model(cls, c: Category, income: Decimal) -> "CategoryType":
+    def from_resolved(cls, c: ResolvedCategory) -> "CategoryType":
         return cls(
             id=c.id,
+            contribution_category_id=c.contribution_category_id,
             name=c.name,
             kind=CategoryKind(c.kind),
             value=c.value,
-            amount=category_amount(income, c.kind, c.value),
+            amount=c.amount,
+            source=CategorySourceType(c.source.value),
             created_at=c.created_at,
         )
 
@@ -107,30 +121,20 @@ class PayCycleType:
     categories: list[CategoryType]
 
     @classmethod
-    def from_model(cls, c: PayCycle) -> "PayCycleType":
-        cats = sorted(c.categories, key=lambda x: x.created_at)
-        views = [CategoryType.from_model(cat, c.income) for cat in cats]
-        cats_total = sum((v.amount for v in views), Decimal("0"))
-        breakdown = compute_breakdown(
-            income=c.income,
-            savings_pct=c.savings_pct,
-            retirement_401k_pct=c.retirement_401k_pct,
-            hsa_amount=c.hsa_amount,
-            categories_total=cats_total,
-        )
+    def from_resolved(cls, c: PayCycle, r: ResolvedCycle) -> "PayCycleType":
         return cls(
             id=c.id,
             start_date=c.start_date,
             end_date=c.end_date,
-            income=breakdown.income,
-            savings_pct=c.savings_pct,
-            retirement_401k_pct=c.retirement_401k_pct,
-            hsa_amount=breakdown.hsa,
-            savings_amount=breakdown.savings,
-            retirement_amount=breakdown.retirement,
-            categories_total=breakdown.categories_total,
-            available_spending=breakdown.available_spending,
-            categories=views,
+            income=r.breakdown.income,
+            savings_pct=r.savings_pct,
+            retirement_401k_pct=r.retirement_401k_pct,
+            hsa_amount=r.breakdown.hsa,
+            savings_amount=r.breakdown.savings,
+            retirement_amount=r.breakdown.retirement,
+            categories_total=r.breakdown.categories_total,
+            available_spending=r.breakdown.available_spending,
+            categories=[CategoryType.from_resolved(rc) for rc in r.categories],
         )
 
 

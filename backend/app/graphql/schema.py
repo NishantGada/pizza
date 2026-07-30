@@ -14,7 +14,6 @@ from app.graphql.types import (
     BudgetSettingsType,
     CategoryKind,
     CategoryTotal,
-    CategoryType,
     ContributionCategoryType,
     DashboardSummary,
     PayCycleType,
@@ -23,6 +22,7 @@ from app.graphql.types import (
 from app.services import auth, categories, contributions, cycles, settings
 from app.services.calc import money
 from app.services.errors import ServiceError
+from app.services.resolve import resolve_cycle
 
 T = TypeVar("T")
 
@@ -32,6 +32,14 @@ async def guard(coro: Awaitable[T]) -> T:
         return await coro
     except ServiceError as exc:
         raise GraphQLError(str(exc)) from exc
+
+
+async def _cycle_view(session, user_id: UUID, cycle_id: UUID) -> PayCycleType:
+    """Resolve one cycle against the user's live globals into a view."""
+    cycle = await guard(cycles.get_cycle(session, user_id, cycle_id))
+    st = await guard(settings.get_settings(session, user_id))
+    globals_ = await guard(contributions.list_contribution_categories(session, user_id))
+    return PayCycleType.from_resolved(cycle, resolve_cycle(cycle, st, globals_))
 
 
 @strawberry.type
@@ -70,26 +78,32 @@ class Query:
         user_id = require_user(info)
         async with info.context.db() as session:
             rows = await guard(cycles.list_cycles(session, user_id))
-            return [PayCycleType.from_model(c) for c in rows]
+            st = await guard(settings.get_settings(session, user_id))
+            globals_ = await guard(contributions.list_contribution_categories(session, user_id))
+            return [PayCycleType.from_resolved(c, resolve_cycle(c, st, globals_)) for c in rows]
 
     @strawberry.field
     async def pay_cycle(self, info: strawberry.Info, id: UUID) -> PayCycleType:
         user_id = require_user(info)
         async with info.context.db() as session:
-            row = await guard(cycles.get_cycle(session, user_id, id))
-            return PayCycleType.from_model(row)
+            return await _cycle_view(session, user_id, id)
 
     @strawberry.field
     async def dashboard(self, info: strawberry.Info) -> DashboardSummary:
         user_id = require_user(info)
         async with info.context.db() as session:
             rows = await guard(cycles.list_cycles(session, user_id))
-            views = [PayCycleType.from_model(c) for c in rows]
-            cat_totals = await guard(categories.category_totals(session, user_id))
-        total_saved = money(sum((v.savings_amount for v in views), Decimal("0")))
-        total_retirement = money(sum((v.retirement_amount for v in views), Decimal("0")))
-        total_hsa = money(sum((v.hsa_amount for v in views), Decimal("0")))
-        total_allocated = money(sum((v.categories_total for v in views), Decimal("0")))
+            st = await guard(settings.get_settings(session, user_id))
+            globals_ = await guard(contributions.list_contribution_categories(session, user_id))
+            resolved = [(c, resolve_cycle(c, st, globals_)) for c in rows]
+            views = [PayCycleType.from_resolved(c, r) for c, r in resolved]
+            cat_totals = await guard(categories.category_totals(session, user_id, globals_))
+        total_saved = money(sum((r.breakdown.savings for _, r in resolved), Decimal("0")))
+        total_retirement = money(sum((r.breakdown.retirement for _, r in resolved), Decimal("0")))
+        total_hsa = money(sum((r.breakdown.hsa for _, r in resolved), Decimal("0")))
+        total_allocated = money(
+            sum((r.breakdown.categories_total for _, r in resolved), Decimal("0"))
+        )
         return DashboardSummary(
             cycle_count=len(views),
             total_income=money(sum((v.income for v in views), Decimal("0"))),
@@ -212,7 +226,7 @@ class Mutation:
                     income=income,
                 )
             )
-            return PayCycleType.from_model(row)
+            return await _cycle_view(session, user_id, row.id)
 
     @strawberry.mutation
     async def update_pay_cycle(
@@ -235,7 +249,7 @@ class Mutation:
                     income=income,
                 )
             )
-            return PayCycleType.from_model(row)
+            return await _cycle_view(session, user_id, row.id)
 
     @strawberry.mutation
     async def delete_pay_cycle(self, info: strawberry.Info, id: UUID) -> bool:
@@ -245,18 +259,60 @@ class Mutation:
             return True
 
     @strawberry.mutation
-    async def add_category(
+    async def set_cycle_category(
+        self,
+        info: strawberry.Info,
+        pay_cycle_id: UUID,
+        contribution_category_id: UUID,
+        kind: CategoryKind,
+        value: Decimal,
+    ) -> PayCycleType:
+        """Override a global contribution rule for just this cycle."""
+        user_id = require_user(info)
+        async with info.context.db() as session:
+            await guard(
+                categories.set_override(
+                    session,
+                    user_id,
+                    pay_cycle_id=pay_cycle_id,
+                    contribution_category_id=contribution_category_id,
+                    kind=kind.value,
+                    value=value,
+                )
+            )
+            return await _cycle_view(session, user_id, pay_cycle_id)
+
+    @strawberry.mutation
+    async def reset_cycle_category(
+        self, info: strawberry.Info, pay_cycle_id: UUID, contribution_category_id: UUID
+    ) -> PayCycleType:
+        """Drop a cycle's override so it follows the global rule again."""
+        user_id = require_user(info)
+        async with info.context.db() as session:
+            await guard(
+                categories.clear_override(
+                    session,
+                    user_id,
+                    pay_cycle_id=pay_cycle_id,
+                    contribution_category_id=contribution_category_id,
+                )
+            )
+            return await _cycle_view(session, user_id, pay_cycle_id)
+
+    @strawberry.mutation
+    async def add_cycle_category(
         self,
         info: strawberry.Info,
         pay_cycle_id: UUID,
         name: str,
         kind: CategoryKind,
         value: Decimal,
-    ) -> CategoryType:
+    ) -> PayCycleType:
+        """Add a one-off category that exists only on this cycle."""
         user_id = require_user(info)
         async with info.context.db() as session:
-            row = await guard(
-                categories.add_category(
+            await guard(
+                categories.add_adhoc(
                     session,
                     user_id,
                     pay_cycle_id=pay_cycle_id,
@@ -265,22 +321,22 @@ class Mutation:
                     value=value,
                 )
             )
-            cycle = await guard(cycles.get_cycle(session, user_id, pay_cycle_id))
-            return CategoryType.from_model(row, cycle.income)
+            return await _cycle_view(session, user_id, pay_cycle_id)
 
     @strawberry.mutation
-    async def update_category(
+    async def update_cycle_category(
         self,
         info: strawberry.Info,
         id: UUID,
         name: str | None = None,
         kind: CategoryKind | None = None,
         value: Decimal | None = None,
-    ) -> CategoryType:
+    ) -> PayCycleType:
+        """Edit an ad-hoc cycle-only category."""
         user_id = require_user(info)
         async with info.context.db() as session:
             row = await guard(
-                categories.update_category(
+                categories.update_adhoc(
                     session,
                     user_id,
                     id,
@@ -289,15 +345,15 @@ class Mutation:
                     value=value,
                 )
             )
-            cycle = await guard(cycles.get_cycle(session, user_id, row.pay_cycle_id))
-            return CategoryType.from_model(row, cycle.income)
+            return await _cycle_view(session, user_id, row.pay_cycle_id)
 
     @strawberry.mutation
-    async def delete_category(self, info: strawberry.Info, id: UUID) -> bool:
+    async def delete_cycle_category(self, info: strawberry.Info, id: UUID) -> PayCycleType:
+        """Remove an ad-hoc cycle-only category."""
         user_id = require_user(info)
         async with info.context.db() as session:
-            await guard(categories.delete_category(session, user_id, id))
-            return True
+            pay_cycle_id = await guard(categories.delete_adhoc(session, user_id, id))
+            return await _cycle_view(session, user_id, pay_cycle_id)
 
 
 schema = strawberry.Schema(query=Query, mutation=Mutation)

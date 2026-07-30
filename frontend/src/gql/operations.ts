@@ -123,10 +123,12 @@ const CYCLE_FIELDS = `
   availableSpending
   categories {
     id
+    contributionCategoryId
     name
     kind
     value
     amount
+    source
     createdAt
   }
 `;
@@ -184,24 +186,57 @@ export const DELETE_PAY_CYCLE = gql`
   }
 `;
 
-export const ADD_CATEGORY = gql`
-  mutation AddCategory($payCycleId: UUID!, $name: String!, $kind: CategoryKind!, $value: Decimal!) {
-    addCategory(payCycleId: $payCycleId, name: $name, kind: $kind, value: $value) {
-      id
+export const SET_CYCLE_CATEGORY = gql`
+  mutation SetCycleCategory(
+    $payCycleId: UUID!
+    $contributionCategoryId: UUID!
+    $kind: CategoryKind!
+    $value: Decimal!
+  ) {
+    setCycleCategory(
+      payCycleId: $payCycleId
+      contributionCategoryId: $contributionCategoryId
+      kind: $kind
+      value: $value
+    ) {
+      ${CYCLE_FIELDS}
     }
   }
 `;
 
-export const UPDATE_CATEGORY = gql`
-  mutation UpdateCategory($id: UUID!, $name: String, $kind: CategoryKind, $value: Decimal) {
-    updateCategory(id: $id, name: $name, kind: $kind, value: $value) {
-      id
+export const RESET_CYCLE_CATEGORY = gql`
+  mutation ResetCycleCategory($payCycleId: UUID!, $contributionCategoryId: UUID!) {
+    resetCycleCategory(payCycleId: $payCycleId, contributionCategoryId: $contributionCategoryId) {
+      ${CYCLE_FIELDS}
     }
   }
 `;
 
-export const DELETE_CATEGORY = gql`
-  mutation DeleteCategory($id: UUID!) {
-    deleteCategory(id: $id)
+export const ADD_CYCLE_CATEGORY = gql`
+  mutation AddCycleCategory(
+    $payCycleId: UUID!
+    $name: String!
+    $kind: CategoryKind!
+    $value: Decimal!
+  ) {
+    addCycleCategory(payCycleId: $payCycleId, name: $name, kind: $kind, value: $value) {
+      ${CYCLE_FIELDS}
+    }
+  }
+`;
+
+export const UPDATE_CYCLE_CATEGORY = gql`
+  mutation UpdateCycleCategory($id: UUID!, $name: String, $kind: CategoryKind, $value: Decimal) {
+    updateCycleCategory(id: $id, name: $name, kind: $kind, value: $value) {
+      ${CYCLE_FIELDS}
+    }
+  }
+`;
+
+export const DELETE_CYCLE_CATEGORY = gql`
+  mutation DeleteCycleCategory($id: UUID!) {
+    deleteCycleCategory(id: $id) {
+      ${CYCLE_FIELDS}
+    }
   }
 `;

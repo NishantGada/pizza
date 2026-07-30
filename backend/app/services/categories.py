@@ -1,3 +1,11 @@
+"""Per-cycle contribution rows: overrides of a global rule, or ad-hoc extras.
+
+A cycle inherits the live global contribution categories. It only stores a row
+here when it diverges: an *override* (custom amount for one global rule in this
+cycle) or an *ad-hoc* category (exists only on this cycle). Everything else is
+resolved live in `app.services.resolve`.
+"""
+
 from decimal import Decimal
 from uuid import UUID
 
@@ -5,39 +13,101 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.models import Category, PayCycle
-from app.services.calc import KIND_FIXED, KIND_PERCENT, category_amount
+from app.models import Category, ContributionCategory, PayCycle
+from app.services.calc import KIND_FIXED, KIND_PERCENT
 from app.services.cycles import get_cycle
 from app.services.errors import InvalidInput, NotFound
+from app.services.resolve import resolve_categories
 
 
 async def category_totals(
-    session: AsyncSession, user_id: UUID
+    session: AsyncSession, user_id: UUID, globals_: list[ContributionCategory]
 ) -> list[tuple[str, Decimal, int]]:
-    """Sum each category name across all of the user's pay cycles.
+    """Sum each category's effective dollars across all of the user's cycles.
 
-    Percent categories resolve to their effective dollars for the cycle they
-    belong to, so this aggregates real contributed amounts. Returns
-    (name, total_amount, cycle_count) ordered by total desc.
+    Resolves every cycle against the live globals so overrides and inherited
+    values are both counted. Returns (name, total_amount, cycle_count) ordered
+    by total desc.
     """
-    result = await session.scalars(
+    cycles = await session.scalars(
         select(PayCycle)
         .where(PayCycle.user_id == user_id)
         .options(selectinload(PayCycle.categories))
     )
     totals: dict[str, Decimal] = {}
     counts: dict[str, int] = {}
-    for cycle in result:
-        for cat in cycle.categories:
-            amount = category_amount(cycle.income, cat.kind, cat.value)
-            totals[cat.name] = totals.get(cat.name, Decimal("0")) + amount
+    for cycle in cycles:
+        for cat in resolve_categories(cycle, globals_):
+            totals[cat.name] = totals.get(cat.name, Decimal("0")) + cat.amount
             counts[cat.name] = counts.get(cat.name, 0) + 1
     rows = [(name, total, counts[name]) for name, total in totals.items()]
     rows.sort(key=lambda r: (-r[1], r[0]))
     return rows
 
 
-async def add_category(
+# --- Overrides of a global rule for a single cycle ------------------------
+
+
+async def set_override(
+    session: AsyncSession,
+    user_id: UUID,
+    *,
+    pay_cycle_id: UUID,
+    contribution_category_id: UUID,
+    kind: str,
+    value: Decimal,
+) -> None:
+    """Override a global contribution rule for just this cycle (upsert)."""
+    await get_cycle(session, user_id, pay_cycle_id)  # ownership check
+    await _get_owned_global(session, user_id, contribution_category_id)  # ownership check
+    _validate(kind, value)
+    row = await session.scalar(
+        select(Category).where(
+            Category.pay_cycle_id == pay_cycle_id,
+            Category.contribution_category_id == contribution_category_id,
+        )
+    )
+    if row is None:
+        session.add(
+            Category(
+                user_id=user_id,
+                pay_cycle_id=pay_cycle_id,
+                contribution_category_id=contribution_category_id,
+                kind=kind,
+                value=value,
+            )
+        )
+    else:
+        row.kind = kind
+        row.value = value
+    await session.commit()
+
+
+async def clear_override(
+    session: AsyncSession,
+    user_id: UUID,
+    *,
+    pay_cycle_id: UUID,
+    contribution_category_id: UUID,
+) -> None:
+    """Drop a cycle's override so it inherits the global rule again."""
+    await get_cycle(session, user_id, pay_cycle_id)  # ownership check
+    row = await session.scalar(
+        select(Category).where(
+            Category.user_id == user_id,
+            Category.pay_cycle_id == pay_cycle_id,
+            Category.contribution_category_id == contribution_category_id,
+        )
+    )
+    if row is not None:
+        await session.delete(row)
+        await session.commit()
+
+
+# --- Ad-hoc categories that exist only on one cycle -----------------------
+
+
+async def add_adhoc(
     session: AsyncSession,
     user_id: UUID,
     *,
@@ -46,33 +116,24 @@ async def add_category(
     kind: str,
     value: Decimal,
 ) -> Category:
-    # Ownership check: raises NotFound if the cycle isn't the user's.
-    await get_cycle(session, user_id, pay_cycle_id)
+    await get_cycle(session, user_id, pay_cycle_id)  # ownership check
     name = _clean_name(name)
     _validate(kind, value)
-    category = Category(
+    row = Category(
         user_id=user_id,
         pay_cycle_id=pay_cycle_id,
+        contribution_category_id=None,
         name=name,
         kind=kind,
         value=value,
     )
-    session.add(category)
+    session.add(row)
     await session.commit()
-    await session.refresh(category)
-    return category
+    await session.refresh(row)
+    return row
 
 
-async def _get_owned(session: AsyncSession, user_id: UUID, category_id: UUID) -> Category:
-    category = await session.scalar(
-        select(Category).where(Category.id == category_id, Category.user_id == user_id)
-    )
-    if category is None:
-        raise NotFound("Category not found.")
-    return category
-
-
-async def update_category(
+async def update_adhoc(
     session: AsyncSession,
     user_id: UUID,
     category_id: UUID,
@@ -81,24 +142,57 @@ async def update_category(
     kind: str | None = None,
     value: Decimal | None = None,
 ) -> Category:
-    category = await _get_owned(session, user_id, category_id)
-    new_kind = kind if kind is not None else category.kind
-    new_value = value if value is not None else category.value
+    row = await _get_owned_adhoc(session, user_id, category_id)
+    new_kind = kind if kind is not None else row.kind
+    new_value = value if value is not None else row.value
     if kind is not None or value is not None:
         _validate(new_kind, new_value)
-        category.kind = new_kind
-        category.value = new_value
+        row.kind = new_kind
+        row.value = new_value
     if name is not None:
-        category.name = _clean_name(name)
+        row.name = _clean_name(name)
     await session.commit()
-    await session.refresh(category)
-    return category
+    await session.refresh(row)
+    return row
 
 
-async def delete_category(session: AsyncSession, user_id: UUID, category_id: UUID) -> None:
-    category = await _get_owned(session, user_id, category_id)
-    await session.delete(category)
+async def delete_adhoc(session: AsyncSession, user_id: UUID, category_id: UUID) -> UUID:
+    """Delete an ad-hoc category. Returns its pay cycle id for view rebuilds."""
+    row = await _get_owned_adhoc(session, user_id, category_id)
+    pay_cycle_id = row.pay_cycle_id
+    await session.delete(row)
     await session.commit()
+    return pay_cycle_id
+
+
+# --- Helpers --------------------------------------------------------------
+
+
+async def _get_owned_global(
+    session: AsyncSession, user_id: UUID, category_id: UUID
+) -> ContributionCategory:
+    row = await session.scalar(
+        select(ContributionCategory).where(
+            ContributionCategory.id == category_id,
+            ContributionCategory.user_id == user_id,
+        )
+    )
+    if row is None:
+        raise NotFound("Contribution category not found.")
+    return row
+
+
+async def _get_owned_adhoc(
+    session: AsyncSession, user_id: UUID, category_id: UUID
+) -> Category:
+    row = await session.scalar(
+        select(Category).where(Category.id == category_id, Category.user_id == user_id)
+    )
+    if row is None:
+        raise NotFound("Category not found.")
+    if row.contribution_category_id is not None:
+        raise InvalidInput("This category is an override; edit it via the global rule instead.")
+    return row
 
 
 def _clean_name(name: str) -> str:

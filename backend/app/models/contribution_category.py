@@ -10,11 +10,11 @@ from app.db.base import Base, TimestampMixin, new_uuid
 class ContributionCategory(Base, TimestampMixin):
     """A global, per-user contribution rule (e.g. Vacation 5%, Gym $50).
 
-    These are the templates a user manages once. Each rule is either a
+    These are the live rules a user manages once. Each rule is either a
     percent of income (kind='percent', value = fraction like 0.0500) or a
-    fixed dollar amount (kind='fixed', value = dollars). When a pay cycle is
-    created the current set is snapshotted onto it as `Category` rows, so
-    later edits here never rewrite the history of past cycles.
+    fixed dollar amount (kind='fixed', value = dollars). Every cycle inherits
+    the current set at read time, so editing a rule reflects on all cycles
+    instantly; a cycle only stores a `Category` row when it overrides one.
     """
 
     __tablename__ = "contribution_categories"

@@ -9,8 +9,14 @@ from app.db.base import Base, TimestampMixin, new_uuid
 
 
 class PayCycle(Base, TimestampMixin):
-    """One paycheck period. Rule values are snapshotted at creation so a later
-    change to BudgetSettings never rewrites the history of past cycles."""
+    """One paycheck period.
+
+    A cycle owns only what is genuinely its own: income and date range. The
+    applied rules (savings/401k/HSA rates and contribution categories) are
+    resolved live from the user's global settings at read time, so editing a
+    rule reflects on every cycle instantly. The nullable columns below are
+    per-cycle *overrides*: null means "inherit the current global value".
+    """
 
     __tablename__ = "pay_cycles"
     __table_args__ = (UniqueConstraint("user_id", "start_date", "end_date", name="uq_cycle_span"),)
@@ -26,10 +32,10 @@ class PayCycle(Base, TimestampMixin):
     # Post-tax income entered for this cycle.
     income: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
 
-    # Snapshot of the applied rules.
-    savings_pct: Mapped[Decimal] = mapped_column(Numeric(5, 4), nullable=False)
-    retirement_401k_pct: Mapped[Decimal] = mapped_column(Numeric(5, 4), nullable=False)
-    hsa_amount: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
+    # Per-cycle rule overrides. NULL -> inherit the live global BudgetSettings.
+    savings_pct: Mapped[Decimal | None] = mapped_column(Numeric(5, 4), nullable=True)
+    retirement_401k_pct: Mapped[Decimal | None] = mapped_column(Numeric(5, 4), nullable=True)
+    hsa_amount: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
 
     user: Mapped["User"] = relationship(back_populates="pay_cycles")  # noqa: F821
     categories: Mapped[list["Category"]] = relationship(  # noqa: F821
