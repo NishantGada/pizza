@@ -17,10 +17,11 @@ from app.graphql.types import (
     ContributionCategoryType,
     DashboardSummary,
     PayCycleType,
+    Projection,
     UserType,
 )
 from app.services import auth, categories, contributions, cycles, settings
-from app.services.calc import money
+from app.services.dashboard import build_dashboard
 from app.services.errors import ServiceError
 from app.services.resolve import resolve_cycle
 
@@ -96,28 +97,24 @@ class Query:
             st = await guard(settings.get_settings(session, user_id))
             globals_ = await guard(contributions.list_contribution_categories(session, user_id))
             resolved = [(c, resolve_cycle(c, st, globals_)) for c in rows]
-            views = [PayCycleType.from_resolved(c, r) for c, r in resolved]
-            cat_totals = await guard(categories.category_totals(session, user_id, globals_))
-        total_saved = money(sum((r.breakdown.savings for _, r in resolved), Decimal("0")))
-        total_retirement = money(sum((r.breakdown.retirement for _, r in resolved), Decimal("0")))
-        total_hsa = money(sum((r.breakdown.hsa for _, r in resolved), Decimal("0")))
-        total_allocated = money(
-            sum((r.breakdown.categories_total for _, r in resolved), Decimal("0"))
-        )
+        views = [PayCycleType.from_resolved(c, r) for c, r in resolved]
+        data = build_dashboard(resolved)
         return DashboardSummary(
-            cycle_count=len(views),
-            total_income=money(sum((v.income for v in views), Decimal("0"))),
-            total_saved=total_saved,
-            total_retirement=total_retirement,
-            total_hsa=total_hsa,
-            total_allocated=total_allocated,
-            total_contributed=money(total_saved + total_retirement + total_hsa + total_allocated),
-            total_available=money(sum((v.available_spending for v in views), Decimal("0"))),
+            cycle_count=data.cycle_count,
+            total_income=data.total_income,
+            total_saved=data.total_saved,
+            total_retirement=data.total_retirement,
+            total_hsa=data.total_hsa,
+            total_allocated=data.total_allocated,
+            total_contributed=data.total_contributed,
+            total_available=data.total_available,
+            saved_projection=Projection.from_data(data.saved_projection),
+            retirement_projection=Projection.from_data(data.retirement_projection),
+            hsa_projection=Projection.from_data(data.hsa_projection),
+            allocated_projection=Projection.from_data(data.allocated_projection),
+            projection_label=data.projection_label,
             latest_cycle=views[0] if views else None,
-            by_category=[
-                CategoryTotal(name=name, total=money(total), cycle_count=count)
-                for name, total, count in cat_totals
-            ],
+            by_category=[CategoryTotal.from_data(c) for c in data.by_category],
         )
 
 

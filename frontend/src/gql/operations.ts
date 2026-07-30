@@ -144,10 +144,15 @@ export const DASHBOARD = gql`
       totalAllocated
       totalContributed
       totalAvailable
+      projectionLabel
+      savedProjection { actual annual relative }
+      retirementProjection { actual annual relative }
+      hsaProjection { actual annual relative }
+      allocatedProjection { actual annual relative }
       byCategory {
         name
-        total
         cycleCount
+        projection { actual annual relative }
       }
     }
     payCycles {

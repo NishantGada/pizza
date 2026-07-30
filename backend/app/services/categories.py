@@ -11,39 +11,11 @@ from uuid import UUID
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
 
-from app.models import Category, ContributionCategory, PayCycle
+from app.models import Category, ContributionCategory
 from app.services.calc import KIND_FIXED, KIND_PERCENT
 from app.services.cycles import get_cycle
 from app.services.errors import InvalidInput, NotFound
-from app.services.resolve import resolve_categories
-
-
-async def category_totals(
-    session: AsyncSession, user_id: UUID, globals_: list[ContributionCategory]
-) -> list[tuple[str, Decimal, int]]:
-    """Sum each category's effective dollars across all of the user's cycles.
-
-    Resolves every cycle against the live globals so overrides and inherited
-    values are both counted. Returns (name, total_amount, cycle_count) ordered
-    by total desc.
-    """
-    cycles = await session.scalars(
-        select(PayCycle)
-        .where(PayCycle.user_id == user_id)
-        .options(selectinload(PayCycle.categories))
-    )
-    totals: dict[str, Decimal] = {}
-    counts: dict[str, int] = {}
-    for cycle in cycles:
-        for cat in resolve_categories(cycle, globals_):
-            totals[cat.name] = totals.get(cat.name, Decimal("0")) + cat.amount
-            counts[cat.name] = counts.get(cat.name, 0) + 1
-    rows = [(name, total, counts[name]) for name, total in totals.items()]
-    rows.sort(key=lambda r: (-r[1], r[0]))
-    return rows
-
 
 # --- Overrides of a global rule for a single cycle ------------------------
 

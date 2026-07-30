@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from "react";
+import { Fragment, useState, type FormEvent } from "react";
 import { Link } from "react-router-dom";
 import { useMutation, useQuery } from "urql";
 
@@ -8,7 +8,8 @@ import { CREATE_PAY_CYCLE, DASHBOARD } from "../gql/operations";
 import { dateRange, money } from "../lib/format";
 
 type CycleRow = Cycle & { id: string; startDate: string; endDate: string };
-type CategoryTotal = { name: string; total: string; cycleCount: number };
+type Projection = { actual: string; annual: string; relative: string };
+type CategoryTotal = { name: string; cycleCount: number; projection: Projection };
 type Summary = {
   cycleCount: number;
   totalIncome: string;
@@ -18,6 +19,11 @@ type Summary = {
   totalAllocated: string;
   totalContributed: string;
   totalAvailable: string;
+  projectionLabel: string;
+  savedProjection: Projection;
+  retirementProjection: Projection;
+  hsaProjection: Projection;
+  allocatedProjection: Projection;
   byCategory: CategoryTotal[];
 };
 
@@ -93,13 +99,43 @@ export default function Dashboard() {
   );
 }
 
+const COLS = "grid grid-cols-[1fr_auto_auto_auto] items-center gap-x-6 gap-y-2.5 text-sm";
+
+function ColumnHeader({ label }: { label: string }) {
+  return (
+    <>
+      <span />
+      <span className="text-right text-[10px] font-semibold uppercase tracking-wide text-slate-400">
+        Actual
+      </span>
+      <span className="text-right text-[10px] font-semibold uppercase tracking-wide text-slate-400">
+        Annual
+      </span>
+      <span className="text-right text-[10px] font-semibold uppercase tracking-wide text-slate-400">
+        {label}
+      </span>
+    </>
+  );
+}
+
+function ProjectionCells({ proj }: { proj: Projection }) {
+  return (
+    <>
+      <span className="text-right font-medium tabular-nums text-slate-900">
+        {money(proj.actual)}
+      </span>
+      <span className="text-right tabular-nums text-slate-500">{money(proj.annual)}</span>
+      <span className="text-right tabular-nums text-slate-500">{money(proj.relative)}</span>
+    </>
+  );
+}
+
 function Contributions({ summary }: { summary: Summary }) {
-  const income = Number(summary.totalIncome) || 0;
-  const pct = (v: string) => (income > 0 ? `${Math.round((Number(v) / income) * 100)}%` : "—");
+  const label = summary.projectionLabel || "To date";
   const fixed = [
-    { label: "Savings", value: summary.totalSaved, color: "#f59e0b" },
-    { label: "401(k)", value: summary.totalRetirement, color: "#10b981" },
-    { label: "HSA", value: summary.totalHsa, color: "#0ea5e9" },
+    { name: "Savings", proj: summary.savedProjection, color: "#f59e0b" },
+    { name: "401(k)", proj: summary.retirementProjection, color: "#10b981" },
+    { name: "HSA", proj: summary.hsaProjection, color: "#0ea5e9" },
   ];
 
   return (
@@ -110,26 +146,22 @@ function Contributions({ summary }: { summary: Summary }) {
         </h2>
         <div className="text-right">
           <span className="text-lg font-semibold">{money(summary.totalContributed)}</span>
-          <span className="ml-2 text-sm text-slate-400">
-            {pct(summary.totalContributed)} of income
-          </span>
+          <span className="ml-2 text-sm text-slate-400">contributed so far</span>
         </div>
       </div>
 
-      <ul className="space-y-2.5">
+      <div className={COLS}>
+        <ColumnHeader label={label} />
         {fixed.map((f) => (
-          <li key={f.label} className="flex items-center justify-between text-sm">
+          <Fragment key={f.name}>
             <span className="flex items-center gap-2 text-slate-600">
               <span className="h-2.5 w-2.5 rounded-sm" style={{ backgroundColor: f.color }} />
-              {f.label}
+              {f.name}
             </span>
-            <span className="flex items-baseline gap-2">
-              <span className="text-xs tabular-nums text-slate-400">{pct(f.value)}</span>
-              <span className="font-medium text-slate-900">{money(f.value)}</span>
-            </span>
-          </li>
+            <ProjectionCells proj={f.proj} />
+          </Fragment>
         ))}
-      </ul>
+      </div>
 
       {summary.byCategory.length > 0 && (
         <>
@@ -138,24 +170,21 @@ function Contributions({ summary }: { summary: Summary }) {
             <span className="text-xs font-semibold uppercase tracking-wide text-slate-400">
               Categories
             </span>
-            <span className="text-xs text-slate-400">· {money(summary.totalAllocated)} total</span>
+            <span className="text-xs text-slate-400">· {money(summary.totalAllocated)} tracked</span>
           </div>
-          <ul className="space-y-2.5">
+          <div className={COLS}>
             {summary.byCategory.map((c) => (
-              <li key={c.name} className="flex items-center justify-between text-sm">
+              <Fragment key={c.name}>
                 <span className="text-slate-600">
                   {c.name}
                   <span className="ml-2 text-xs text-slate-400">
                     {c.cycleCount} {c.cycleCount === 1 ? "cycle" : "cycles"}
                   </span>
                 </span>
-                <span className="flex items-baseline gap-2">
-                  <span className="text-xs tabular-nums text-slate-400">{pct(c.total)}</span>
-                  <span className="font-medium text-slate-900">{money(c.total)}</span>
-                </span>
-              </li>
+                <ProjectionCells proj={c.projection} />
+              </Fragment>
             ))}
-          </ul>
+          </div>
         </>
       )}
     </Card>

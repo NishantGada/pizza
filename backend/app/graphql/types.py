@@ -9,6 +9,8 @@ import strawberry
 
 from app.models import BudgetSettings, ContributionCategory, PayCycle, User
 from app.services.calc import KIND_FIXED, KIND_PERCENT
+from app.services.dashboard import CategoryProjection
+from app.services.dashboard import Projection as ProjectionData
 from app.services.resolve import CategorySource, ResolvedCategory, ResolvedCycle
 
 
@@ -139,10 +141,29 @@ class PayCycleType:
 
 
 @strawberry.type
+class Projection:
+    actual: Decimal  # tracked across recorded cycles so far
+    annual: Decimal  # full-year projection
+    relative: Decimal  # annual prorated to the tracked window (e.g. Jul–Dec)
+
+    @classmethod
+    def from_data(cls, p: ProjectionData) -> "Projection":
+        return cls(actual=p.actual, annual=p.annual, relative=p.relative)
+
+
+@strawberry.type
 class CategoryTotal:
     name: str
-    total: Decimal
     cycle_count: int
+    projection: Projection
+
+    @classmethod
+    def from_data(cls, c: CategoryProjection) -> "CategoryTotal":
+        return cls(
+            name=c.name,
+            cycle_count=c.cycle_count,
+            projection=Projection.from_data(c.projection),
+        )
 
 
 @strawberry.type
@@ -155,5 +176,10 @@ class DashboardSummary:
     total_allocated: Decimal
     total_contributed: Decimal
     total_available: Decimal
+    saved_projection: Projection
+    retirement_projection: Projection
+    hsa_projection: Projection
+    allocated_projection: Projection
+    projection_label: str
     latest_cycle: PayCycleType | None
     by_category: list[CategoryTotal]
